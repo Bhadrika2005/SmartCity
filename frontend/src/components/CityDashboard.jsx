@@ -39,8 +39,6 @@ import { FaMapMarkerAlt, FaStar, FaImage, FaLightbulb, FaSubway, FaTaxi, FaMoney
 import { WiDaySunny, WiRain, WiDayCloudy } from 'react-icons/wi';
 import { IoLanguage } from 'react-icons/io5';
 
-const FOURSQUARE_API_KEY = 'fsq3yn1OREcmBFYwUhIojMCLRs3UC162HhsFGWNnpmWXbc4=';
-
 const placeCategories = [
   { name: 'Restaurants', icon: FaUtensils, category: '13000' }, // Food & Restaurants
   { name: 'Cafes', icon: FaUtensils, category: '13035' }, // Coffee Shops
@@ -48,10 +46,10 @@ const placeCategories = [
   { name: 'Parks', icon: FaTree, category: '16032' }, // Parks & Nature
   { name: 'Hotels', icon: FaHotel, category: '19014' }, // Hotels
   { name: 'Hospitals', icon: FaHospital, category: '15014' }, // Medical
-  { name: 'Shopping', icon: FaShoppingBag, category: '17000,17069' }, // Malls & Markets
+  { name: 'Shopping', icon: FaShoppingBag, category: '17000' }, // Shopping
   { name: 'Entertainment', icon: FaStar, category: '10000' }, // Arts & Entertainment
   { name: 'Religious', icon: FaLightbulb, category: '12000' }, // Religious Places
-  { name: 'Transport', icon: FaSubway, category: '19042,19043,19044' }, // Bus, Train & Transport
+  { name: 'Transport', icon: FaSubway, category: '19042' }, // Transport
 ];
 
 const CityDashboard = ({ cityData, onSearch, isLoading }) => {
@@ -87,27 +85,22 @@ const CityDashboard = ({ cityData, onSearch, isLoading }) => {
     
     try {
       const radius = 5000; // 5km radius
-      const limit = 9; // Top 10 results
+      const limit = 9; // Top 9 results
       
-      const url = new URL('https://api.foursquare.com/v3/places/search');
-      url.searchParams.append('ll', `${cityData.coordinates.latitude},${cityData.coordinates.longitude}`);
-      url.searchParams.append('radius', radius);
-      url.searchParams.append('limit', limit);
-      url.searchParams.append('categories', category);
-      url.searchParams.append('sort', 'RATING'); // Using single valid sort parameter
-      url.searchParams.append('fields', 'fsq_id,name,location,geocodes,categories,rating,photos,description,tel,website,hours,distance');
-      
-      const response = await fetch(url.toString(), {
-        headers: {
-          'Authorization': FOURSQUARE_API_KEY,
-          'Accept': 'application/json'
+      // Use backend API endpoint instead of deprecated Foursquare
+      const response = await fetch(
+        `http://localhost:5000/api/nearby-places?lat=${cityData.coordinates.latitude}&lon=${cityData.coordinates.longitude}&category=${category}&radius=${radius}&limit=${limit}`,
+        {
+          headers: {
+            'Accept': 'application/json'
+          }
         }
-      });
+      );
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         throw new Error(
-          `Foursquare API error: ${response.status} - ${errorData.message || response.statusText}`
+          `Backend API error: ${response.status} - ${errorData.error || response.statusText}`
         );
       }
       
@@ -150,7 +143,7 @@ const CityDashboard = ({ cityData, onSearch, isLoading }) => {
             longitude: place.geocodes?.main?.longitude
           },
           distance: place.distance ? `${(place.distance / 1000).toFixed(1)} km` : 'Distance not available',
-          rating: place.rating ? `${place.rating.toFixed(1)}/10` : 'No rating',
+          rating: place.rating ? `${place.rating.toFixed(1)}/5` : 'No rating',
           description: place.description || '',
           contact: {
             phone: place.tel || 'Not available',
@@ -165,14 +158,14 @@ const CityDashboard = ({ cityData, onSearch, isLoading }) => {
       
       toast({
         title: 'Places found',
-        description: `Found ${places.length} ${category}(s) nearby`,
+        description: `Found ${places.length} place(s) nearby`,
         status: 'success',
         duration: 3000,
         isClosable: true,
       });
       
     } catch (error) {
-      console.error("Foursquare API error:", error);
+      console.error("API error:", error);
       setApiError(`Error fetching places: ${error.message}`);
       toast({
         title: 'Error',

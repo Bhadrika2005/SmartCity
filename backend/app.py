@@ -321,21 +321,26 @@ def get_city_data():
         # Get Wikipedia data for city description
         wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro=1&explaintext=1&titles={city_name}"
         wiki_response = requests.get(wiki_url)
-        wiki_data = wiki_response.json()
         
         # Process Wikipedia data
         wiki_extract = f"{city_name} is a beautiful city with a rich history and culture."
-        if 'query' in wiki_data and 'pages' in wiki_data['query']:
-            page = next(iter(wiki_data['query']['pages'].values()))
-            if 'extract' in page and page['extract']:
-                wiki_extract = page['extract']
+        wiki_page_id = None
+        
+        try:
+            if wiki_response.status_code == 200 and wiki_response.text:
+                wiki_data = wiki_response.json()
+                if 'query' in wiki_data and 'pages' in wiki_data['query']:
+                    page = next(iter(wiki_data['query']['pages'].values()))
+                    if 'extract' in page and page['extract']:
+                        wiki_extract = page['extract']
+                    wiki_page_id = page.get('pageid')
+            else:
+                print(f"Wikipedia API returned status {wiki_response.status_code} with empty response")
+        except (ValueError, StopIteration) as e:
+            print(f"Error parsing Wikipedia data: {str(e)}")
+            wiki_extract = f"{city_name} is a beautiful city with a rich history and culture."
                 
         # Get more detailed Wikipedia information for tips and info section
-        wiki_page_id = None
-        if 'query' in wiki_data and 'pages' in wiki_data['query']:
-            page = next(iter(wiki_data['query']['pages'].values()))
-            wiki_page_id = page.get('pageid')
-        
         # Process Wikipedia data and structure for Tips & Info section
         tips_and_info = []
         
@@ -1559,6 +1564,123 @@ def get_weather_insights():
         return jsonify({'error': 'Network error while fetching weather data'}), 500
     except Exception as e:
         print(f"Error in get_weather_insights: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/nearby-places', methods=['GET'])
+def get_nearby_places():
+    """Get nearby places using Geoapify Places API"""
+    try:
+        lat = request.args.get('lat')
+        lon = request.args.get('lon')
+        category = request.args.get('category')
+        radius = request.args.get('radius', '5000')
+        limit = request.args.get('limit', '9')
+        
+        print(f"nearby-places request: lat={lat}, lon={lon}, category={category}, radius={radius}, limit={limit}")
+        
+        if not lat or not lon or not category:
+            error_msg = f'Missing required parameters: lat={lat}, lon={lon}, category={category}'
+            print(f"Error: {error_msg}")
+            return jsonify({'error': error_msg}), 400
+        
+        # Validate that lat and lon are valid numbers
+        try:
+            lat_float = float(lat)
+            lon_float = float(lon)
+            radius_int = int(radius)
+            limit_int = int(limit)
+        except ValueError as e:
+            error_msg = f'Invalid parameter types: {str(e)}'
+            print(f"Error: {error_msg}")
+            return jsonify({'error': error_msg}), 400
+        
+        # Mapping of Foursquare-like categories to Geoapify categories
+        category_mapping = {
+            '13000': 'catering.restaurant',  # Restaurants
+            '13035': 'catering.cafe',  # Cafes
+            '16000': 'tourism.attraction,tourism.sights',  # Tourist Spots
+            '16032': 'leisure.park',  # Parks
+            '19014': 'accommodation.hotel',  # Hotels
+            '15014': 'healthcare',  # Hospitals
+            '17000': 'commercial.shopping_mall,commercial.supermarket',  # Shopping
+            '17069': 'commercial.market',  # Markets
+            '10000': 'entertainment',  # Entertainment
+            '12000': 'religion.place',  # Religious Places
+            '19042': 'public_transport.bus_stop',  # Bus
+            '19043': 'public_transport.train_stop',  # Train
+            '19044': 'public_transport.subway_entrance',  # Subway
+        }
+        
+        # Get the Geoapify categories for this search
+        geoapify_categories = category_mapping.get(category, 'tourism.attraction')
+        
+        # Build the Geoapify Places API URL with validated numeric values
+        # Geoapify uses 'bias' parameter for proximity-based search instead of 'filter'
+        places_url = f"https://api.geoapify.com/v2/places?categories={geoapify_categories}&bias=proximity:{lon_float},{lat_float}&limit={limit_int}&apiKey={GEOAPIFY_PLACES_API_KEY}"
+        
+        print(f"Calling Geoapify Places API with URL: {places_url}")
+        
+        headers = {
+            'Accept': 'application/json',
+            'User-Agent': 'CityExplorer/1.0'
+        }
+        
+        places_response = requests.get(places_url, headers=headers)
+        
+        print(f"Geoapify Places API response status: {places_response.status_code}")
+        
+        if places_response.status_code != 200:
+            error_detail = places_response.text if places_response.text else 'No error detail'
+            print(f"Geoapify Places API error: {places_response.status_code} - {error_detail}")
+            return jsonify({'error': f'Failed to fetch nearby places: {places_response.status_code} - {error_detail}'}), places_response.status_code
+        
+        try:
+            places_data = places_response.json()
+        except Exception as e:
+            print(f"Error parsing Geoapify response: {str(e)}")
+            print(f"Response text: {places_response.text}")
+            return jsonify({'error': f'Invalid response from Geoapify API: {str(e)}'}), 500
+        
+        if not places_data.get('features'):
+            return jsonify({'results': []})
+        
+        # Transform Geoapify response to match Foursquare-like format
+        results = []
+        for place in places_data['features']:
+            props = place.get('properties', {})
+            geometry = place.get('geometry', {})
+            coordinates = geometry.get('coordinates', [])
+            
+            result = {
+                'fsq_id': props.get('place_id', ''),
+                'name': props.get('name', 'Unknown'),
+                'location': {
+                    'address': props.get('street', ''),
+                    'locality': props.get('city', ''),
+                    'region': props.get('state', ''),
+                    'country': props.get('country', ''),
+                },
+                'geocodes': {
+                    'main': {
+                        'latitude': coordinates[1] if len(coordinates) > 1 else None,
+                        'longitude': coordinates[0] if len(coordinates) > 0 else None,
+                    }
+                },
+                'categories': [{'name': props.get('categories', ['Unknown'])[0]} if props.get('categories') else [{'name': 'Place'}]],
+                'rating': props.get('rate', 0),
+                'photos': [],
+                'description': props.get('description', ''),
+                'tel': props.get('phone', ''),
+                'website': props.get('website', ''),
+                'hours': {'display': 'Not available'},
+                'distance': 0
+            }
+            results.append(result)
+        
+        return jsonify({'results': results})
+        
+    except Exception as e:
+        print(f"Error in get_nearby_places: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/chat', methods=['POST'])
